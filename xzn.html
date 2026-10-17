@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>谢芷渃</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background-color: #000000; /* 纯黑背景，把白色衬托到最亮 */
+  }
+  #particle-canvas {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<canvas id="particle-canvas"></canvas>
+<script>
+(function () {
+  const canvas = document.getElementById('particle-canvas');
+  const ctx = canvas.getContext('2d');
+
+  let W = 0, H = 0, DPR = 1;
+  let t = 0;
+  let particles = [];
+  let mode = 'heart';
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    buildTargets();
+  }
+
+  function heartPoint(angle) {
+    const x = 16 * Math.pow(Math.sin(angle), 3);
+    const y = 13 * Math.cos(angle) - 5 * Math.cos(2 * angle)
+            - 2 * Math.cos(3 * angle) - Math.cos(4 * angle);
+    return { x: x, y: -y };
+  }
+
+  // 3D 爱心粒子生成
+  function buildHeart3D(count, cx, cy, scale) {
+    const outline = [];
+    for (let i = 0; i < 360; i++) {
+      outline.push(heartPoint((i / 360) * Math.PI * 2));
+    }
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of outline) {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+
+    function inside(px, py) {
+      let wn = 0;
+      for (let i = 0; i < outline.length; i++) {
+        const a = outline[i]; const b = outline[(i + 1) % outline.length];
+        if (a.y <= py) {
+          if (b.y > py && (b.x - a.x) * (py - a.y) - (px - a.x) * (b.y - a.y) > 0) wn++;
+        } else {
+          if (b.y <= py && (b.x - a.x) * (py - a.y) - (px - a.x) * (b.y - a.y) < 0) wn--;
+        }
+      }
+      return wn !== 0;
+    }
+
+    const pts = [];
+    let guard = 0;
+    while (pts.length < count && guard < count * 50) {
+      guard++;
+      const rx = minX + Math.random() * (maxX - minX);
+      const ry = minY + Math.random() * (maxY - minY);
+      if (!inside(rx, ry)) continue;
+
+      const nx = (rx - (minX + maxX) / 2) / ((maxX - minX) / 2);
+      const ny = (ry - (minY + maxY) / 2) / ((maxY - minY) / 2);
+      const dist = Math.sqrt(nx * nx + ny * ny);
+
+      const bulge = Math.max(0, Math.cos(Math.min(1, dist) * Math.PI * 0.5));
+      const z = Math.pow(bulge, 1.5) * 1.4 + Math.random() * 0.2; // 立体感
+      const persp = 1 + z * 0.25;
+      const edgeInset = 1 - Math.pow(dist, 2) * 0.05;
+
+      pts.push({ x: cx + rx * scale * persp * edgeInset, y: cy + ry * scale * persp * edgeInset, z: z });
+    }
+    return pts;
+  }
+
+  // 文字采样
+  function buildTextTargets(text, count, cx, cy, fontSize, letterGap) {
+    const measureCanvas = document.createElement('canvas');
+    const mctx = measureCanvas.getContext('2d');
+    const font = `900 ${fontSize}px "PingFang SC", "Microsoft YaHei", sans-serif`;
+    mctx.font = font;
+    let totalW = letterGap * (text.length - 1);
+    for (const ch of text) totalW += mctx.measureText(ch).width;
+
+    const offW = Math.ceil(totalW + fontSize);
+    const offH = Math.ceil(fontSize * 1.8);
+    const off = document.createElement('canvas');
+    off.width = offW; off.height = offH;
+    const octx = off.getContext('2d');
+    octx.fillStyle = '#fff'; octx.font = font; octx.textBaseline = 'middle';
+
+    let cursorX = fontSize * 0.5;
+    for (let i = 0; i < text.length; i++) {
+      octx.fillText(text[i], cursorX, offH / 2);
+      cursorX += mctx.measureText(text[i]).width + letterGap;
+    }
+
+    const img = octx.getImageData(0, 0, offW, offH).data;
+    const edge = [], inner = [];
+
+    for (let y = 0; y < offH; y+=1) {
+      for (let x = 0; x < offW; x+=1) {
+        if (img[(y * offW + x) * 4 + 3] > 80) {
+          const isEdge = img[(y * offW + x + 1) * 4 + 3] <= 80 || img[(y * offW + x - 1) * 4 + 3] <= 80 || img[((y + 1) * offW + x) * 4 + 3] <= 80 || img[((y - 1) * offW + x) * 4 + 3] <= 80;
+          const p = { x: cx + (x - offW / 2), y: cy + (y - offH / 2), z: 0.5 };
+          if (isEdge) edge.push(p); else inner.push(p);
+        }
+      }
+    }
+
+    const pts = [];
+    for (let i = 0; i < count; i++) {
+      const arr = (i < count * 0.80 || inner.length === 0) ? edge : inner; // 增加边缘占比，字更清晰
+      if (arr.length > 0) pts.push({ ...arr[Math.floor(Math.random() * arr.length)] });
+    }
+    return pts;
+  }
+
+  let heartTargets = [], textTargets = [];
+
+  function buildTargets() {
+    const cx = W / 2, cy = H / 2;
+    const heartScale = Math.min(W, H) * 0.024;
+    
+    // 因为“谢芷渃”是三个字，字号稍微调小一点防止超出屏幕
+    let fontSize = Math.min(W * 0.25, H * 0.35);
+
+    // 优化性能：限制了最大粒子数量，手机不再卡顿
+    const total = Math.min(6000, Math.floor(W * H / 200));
+
+    heartTargets = buildHeart3D(total, cx, cy, heartScale);
+    
+    // 计算文字宽度自动缩放
+    const mctx = document.createElement('canvas').getContext('2d');
+    mctx.font = `900 ${fontSize}px sans-serif`;
+    let w = 0; for (const ch of '谢芷渃') w += mctx.measureText(ch).width;
+    if (w + fontSize * 0.2 > W * 0.9) fontSize *= (W * 0.9 / (w + fontSize * 0.2));
+
+    textTargets = buildTextTargets('谢芷渃', total, cx, cy, fontSize, fontSize * 0.15);
+
+    if (particles.length !== total) {
+      particles = [];
+      for (let i = 0; i < total; i++) {
+        const p = heartTargets[i] || { x: cx, y: cy, z: 0.5 };
+        particles.push({
+          x: p.x + (Math.random() - 0.5) * 100,
+          y: p.y + (Math.random() - 0.5) * 100,
+          vx: 0, vy: 0,
+          tx: p.x, ty: p.y, tz: p.z,
+          z: p.z,
+          size: 0.8 + Math.random() * 1.2
+        });
+      }
+    }
+  }
+
+  function onClick() {
+    mode = mode === 'heart' ? 'text' : 'heart';
+    const targets = mode === 'heart' ? heartTargets : textTargets;
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      const tg = targets[i % targets.length];
+      p.tx = tg.x; p.ty = tg.y; p.tz = tg.z || 0.5;
+    }
+  }
+
+  function loop() {
+    ctx.clearRect(0, 0, W, H);
+    const breathe = 1 + Math.sin(t * 0.0015) * 0.03;
+    
+    // 纯白爆闪控制
+    const isFlash = Math.random() > 0.92; // 爆闪频率
+    const flashMultiplier = isFlash ? 1.6 : 1.0;
+
+    ctx.globalCompositeOperation = 'lighter';
+
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      
+      const cx = W / 2, cy = H / 2;
+      const tx = cx + (p.tx - cx) * (mode === 'heart' ? breathe : 1);
+      const ty = cy + (p.ty - cy) * (mode === 'heart' ? breathe : 1);
+
+      p.vx += (tx - p.x) * 0.02;
+      p.vy += (ty - p.y) * 0.02;
+      p.vx *= 0.85; p.vy *= 0.85;
+      
+      p.x += p.vx + (Math.random() - 0.5) * 1.5;
+      p.y += p.vy + (Math.random() - 0.5) * 1.5;
+      p.z += (p.tz - p.z) * 0.05;
+
+      const drawSize = p.size * (0.8 + p.z * 0.4);
+      
+      // 中间亮，边缘暗
+      const bright = (0.4 + p.z * 0.6) * flashMultiplier * (0.9 + Math.random() * 0.1);
+
+      // 纯白色光晕
+      const glowR = drawSize * 3.5;
+      const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowR);
+      glow.addColorStop(0, `rgba(255, 255, 255, ${0.3 * bright})`);
+      glow.addColorStop(1, `rgba(255, 255, 255, 0)`);
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, glowR, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 极高亮的纯白核心点
+      ctx.fillStyle = `rgba(255, 255, 255, ${bright})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, drawSize, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    t += 16;
+    requestAnimationFrame(loop);
+  }
+
+  canvas.addEventListener('click', onClick);
+  window.addEventListener('resize', resize);
+  resize();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
